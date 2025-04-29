@@ -27,6 +27,7 @@ import { METAPLEX_PROGRAM_ID } from '../constants'
 import { prepareSwapParams } from '../common'
 import {
     findAssociatedTokenAddress,
+    getTokenProgram,
     isNativeSol,
     unwrapSOLInstruction,
     wrapSOLInstruction,
@@ -158,8 +159,7 @@ export class PoolService {
             virtualPoolState.config
         )
 
-        const { amountIn, minimumAmountOut, swapBaseForQuote, owner } =
-            swapParam
+        const { amountIn, minimumAmountOut, swapBaseForQuote, owner } = swapParam
 
         const { inputMint, outputMint, inputTokenProgram, outputTokenProgram } =
             prepareSwapParams(
@@ -231,6 +231,131 @@ export class PoolService {
 
         const outputTokenAccountInfo =
             await this.connection.getAccountInfo(outputTokenAccount)
+        if (!outputTokenAccountInfo) {
+            preInstructions.push(
+                createAssociatedTokenAccountIdempotentInstruction(
+                    owner,
+                    outputTokenAccount,
+                    owner,
+                    outputMint,
+                    outputTokenProgram
+                )
+            )
+        }
+
+        // Add SOL wrapping instructions if needed
+        if (isSOLInput) {
+            preInstructions.push(
+                ...wrapSOLInstruction(
+                    owner,
+                    inputTokenAccount,
+                    BigInt(amountIn.toString())
+                )
+            )
+        }
+
+        // Add postInstructions for SOL unwrapping
+        const postInstructions: TransactionInstruction[] = []
+        if (isSOLInput || isSOLOutput) {
+            const unwrapIx = unwrapSOLInstruction(owner)
+            if (unwrapIx) {
+                postInstructions.push(unwrapIx)
+            }
+        }
+
+        return program.methods
+            .swap({
+                amountIn,
+                minimumAmountOut,
+            })
+            .accountsPartial(accounts)
+            .preInstructions(preInstructions)
+            .postInstructions(postInstructions)
+            .transaction()
+    }
+
+    async swapOnLaunch(swapParam: SwapParam, config: PublicKey, baseMint: PublicKey, quoteMint: PublicKey, baseMintType: TokenType, quoteMintType: TokenType, baseVault: PublicKey, quoteVault: PublicKey): Promise<Transaction> {
+        const program = this.programClient.getProgram()
+        const poolAuthority = derivePoolAuthority(program.programId)
+        const { amountIn, minimumAmountOut, swapBaseForQuote, owner } = swapParam;
+
+        let inputMint, outputMint, inputTokenProgram, outputTokenProgram;
+
+        if (swapBaseForQuote) {
+            inputMint = baseMint;
+            outputMint = quoteMint;
+            inputTokenProgram = getTokenProgram(baseMintType);
+            outputTokenProgram = getTokenProgram(quoteMintType);
+        } else {
+            inputMint = quoteMint;
+            outputMint = baseMint;
+            inputTokenProgram = getTokenProgram(quoteMintType);
+            outputTokenProgram = getTokenProgram(baseMintType);
+        }
+
+        const isSOLInput = isNativeSol(inputMint)
+        const isSOLOutput = isNativeSol(outputMint)
+
+        const inputTokenAccount = findAssociatedTokenAddress(
+            owner,
+            inputMint,
+            inputTokenProgram
+        )
+
+        const outputTokenAccount = findAssociatedTokenAddress(
+            owner,
+            outputMint,
+            outputTokenProgram
+        )
+
+        await validateBalance(
+            this.connection,
+            owner,
+            inputMint,
+            amountIn,
+            inputTokenAccount
+        )
+
+        const accounts = {
+            poolAuthority,
+            config: config,
+            pool: swapParam.pool,
+            inputTokenAccount,
+            outputTokenAccount,
+            baseVault: baseVault,
+            quoteVault: quoteVault,
+            baseMint: baseMint,
+            quoteMint: quoteMint,
+            payer: owner,
+            tokenBaseProgram: swapBaseForQuote
+                ? inputTokenProgram
+                : outputTokenProgram,
+            tokenQuoteProgram: swapBaseForQuote
+                ? outputTokenProgram
+                : inputTokenProgram,
+            referralTokenAccount: swapParam.referralTokenAccount,
+        }
+
+        // Add preInstructions for ATA creation and SOL wrapping
+        const preInstructions: TransactionInstruction[] = []
+
+        // Check and create ATAs if needed
+        const inputTokenAccountInfo = await this.connection.getAccountInfo(inputTokenAccount)
+
+        if (!inputTokenAccountInfo) {
+            preInstructions.push(
+                createAssociatedTokenAccountIdempotentInstruction(
+                    owner,
+                    inputTokenAccount,
+                    owner,
+                    inputMint,
+                    inputTokenProgram
+                )
+            )
+        }
+
+        const outputTokenAccountInfo = await this.connection.getAccountInfo(outputTokenAccount)
+
         if (!outputTokenAccountInfo) {
             preInstructions.push(
                 createAssociatedTokenAccountIdempotentInstruction(
