@@ -295,7 +295,7 @@ export class PoolService {
         quoteMintType: TokenType,
         baseVault: PublicKey,
         quoteVault: PublicKey,
-    ): Promise<Transaction> {
+    ): Promise<TransactionInstruction[]> {
         const program = this.programClient.getProgram()
         const poolAuthority = derivePoolAuthority(program.programId)
         const { amountIn, minimumAmountOut, swapBaseForQuote, owner } = swapParam;
@@ -401,15 +401,15 @@ export class PoolService {
             }
         }
 
-        return program.methods
+        const instruction = await program.methods
             .swap({
                 amountIn,
                 minimumAmountOut,
             })
             .accountsPartial(accounts)
-            .preInstructions(preInstructions)
-            .postInstructions(postInstructions)
-            .transaction()
+            .instruction()
+
+        return [...preInstructions, instruction, ...postInstructions]
     }
 
     /**
