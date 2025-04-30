@@ -274,7 +274,28 @@ export class PoolService {
             .transaction()
     }
 
-    async swapOnLaunch(swapParam: SwapParam, config: PublicKey, baseMint: PublicKey, quoteMint: PublicKey, baseMintType: TokenType, quoteMintType: TokenType, baseVault: PublicKey, quoteVault: PublicKey): Promise<Transaction> {
+    /**
+     * Swap between base and quote tokens in a pre-launch pool (no account or balance validation)
+     * @param swapParam - The parameters for the swap
+     * @param config - The pool configuration
+     * @param baseMint - The base token mint
+     * @param quoteMint - The quote token mint
+     * @param baseMintType - The type of the base token
+     * @param quoteMintType - The type of the quote token
+     * @param baseVault - The base token vault
+     * @param quoteVault - The quote token vault
+     * @returns A swap transaction
+     */
+    async swapPreLaunch(
+        swapParam: SwapParam,
+        config: PublicKey,
+        baseMint: PublicKey,
+        quoteMint: PublicKey,
+        baseMintType: TokenType,
+        quoteMintType: TokenType,
+        baseVault: PublicKey,
+        quoteVault: PublicKey,
+    ): Promise<Transaction> {
         const program = this.programClient.getProgram()
         const poolAuthority = derivePoolAuthority(program.programId)
         const { amountIn, minimumAmountOut, swapBaseForQuote, owner } = swapParam;
@@ -306,14 +327,6 @@ export class PoolService {
             owner,
             outputMint,
             outputTokenProgram
-        )
-
-        await validateBalance(
-            this.connection,
-            owner,
-            inputMint,
-            amountIn,
-            inputTokenAccount
         )
 
         const accounts = {
